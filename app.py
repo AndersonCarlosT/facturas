@@ -1,36 +1,61 @@
 import streamlit as st
 import pdfplumber
-import json
+import re
+import pandas as pd
+from io import BytesIO
 
-st.set_page_config(page_title="Estructura de PDF", layout="wide")
+st.set_page_config(page_title="Extractor de Factor", layout="wide")
+st.title("📄 Extractor de 'Factor:' en PDFs de facturas")
 
-st.title("🔍 Analizador de estructura de PDF (facturas)")
+uploaded_files = st.file_uploader(
+    "Sube tus facturas PDF",
+    type=["pdf"],
+    accept_multiple_files=True
+)
 
-uploaded_file = st.file_uploader("Sube tu PDF", type=["pdf"])
+if uploaded_files:
+    resultados = []
 
-if uploaded_file is not None:
-    try:
-        with pdfplumber.open(uploaded_file) as pdf:
-            st.success(f"📄 PDF cargado correctamente. Total de páginas: {len(pdf.pages)}")
-            
-            for page_num, page in enumerate(pdf.pages, start=1):
-                st.subheader(f"📄 Página {page_num}")
+    for uploaded_file in uploaded_files:
+        try:
+            with pdfplumber.open(uploaded_file) as pdf:
+                factor_valor = None
                 
-                # Extraer datos estructurados
-                page_data = page.extract_words()  # lista de diccionarios por palabra
-                page_text = page.extract_text()   # texto plano
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.write("**Texto plano:**")
-                    st.text(page_text)
-                
-                with col2:
-                    st.write("**Estructura JSON-like (palabras con posiciones):**")
-                    st.json(page_data)
-                    
-    except Exception as e:
-        st.error(f"❌ Error al procesar el PDF: {e}")
-else:
-    st.info("Por favor, sube un archivo PDF para analizar.")
+                for page in pdf.pages:
+                    texto = page.extract_text()
+                    if texto:
+                        match = re.search(r"Factor:([0-9]+\.[0-9]+)", texto)
+                        if match:
+                            factor_valor = match.group(1)
+                            break  # Como solo hay uno por PDF, paramos aquí
+
+                if factor_valor:
+                    resultados.append({
+                        "Archivo PDF": uploaded_file.name,
+                        "Factor": float(factor_valor)
+                    })
+                else:
+                    resultados.append({
+                        "Archivo PDF": uploaded_file.name,
+                        "Factor": "No encontrado"
+                    })
+        except Exception as e:
+            st.error(f"Error procesando {uploaded_file.name}: {e}")
+
+    if resultados:
+        df = pd.DataFrame(resultados)
+        st.subheader("📊 Resultados extraídos")
+        st.dataframe(df)
+
+        # Generar Excel para descargar
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False)
+        output.seek(0)
+
+        st.download_button(
+            label="⬇️ Descargar resultados en Excel",
+            data=output,
+            file_name="factores_extraidos.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
